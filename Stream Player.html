@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>TV Streaming Player with Accordion</title>
+  <style>
+    body {
+      display: flex;
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background-color: #111;
+      color: white;
+    }
+    #channelList {
+      width: 320px;
+      padding: 10px;
+      background-color: #222;
+      overflow-y: auto;
+      height: 100vh;
+    }
+    #channelList h2 {
+      font-size: 1.2rem;
+    }
+    #channelList input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+    #channelList button {
+      width: 100%;
+      padding: 10px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .category {
+      margin-top: 20px;
+      cursor: pointer;
+    }
+    .category h3 {
+      border-bottom: 1px solid #444;
+      padding-bottom: 4px;
+    }
+    .channel-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      margin: 5px 0;
+      background-color: #333;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    .channel-item:hover {
+      background-color: #444;
+    }
+    .channel-item img {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+    }
+    #videoContainer {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      background-image: url('https://png.pngtree.com/background/20250213/original/pngtree-neon-glow-a-futuristic-visual-symphony-picture-image_15804640.jpg'); /* URL background gambar */
+      background-size: cover;
+      background-position: center;
+      height: 100vh;
+      position: relative; /* Agar judul channel bisa di posisi relatif terhadap video */
+    }
+    #videoPlayer {
+      width: 90%;
+      max-width: 960px;
+      background-color: black;
+    }
+    #channelTitle {
+      font-size: 24px;  /* Ukuran font menjadi lebih besar */
+      font-weight: bold; /* Menambahkan teks tebal */
+      color: #f1f1f1;
+      position: absolute; /* Posisi absolute agar berada di atas video */
+      top: 10px; /* Menempatkan judul sedikit di atas */
+      left: 20px;
+      z-index: 10;
+      background-color: transparent; /* Menghilangkan background solid dan menjadikannya transparan */
+      padding: 5px 10px;
+    }
+    .accordion-content {
+      display: none;
+      margin-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="channelList">
+    <h2>Daftar Channel</h2>
+    <input type="text" id="playlistUrl" placeholder="Masukkan URL playlist .m3u" value="https://raw.githubusercontent.com/hendroagung2904/JejeVISION/main/JejeVISION.m3u" />
+    <button onclick="loadPlaylist()">Muat Playlist</button>
+    <input type="text" id="searchInput" placeholder="Cari channel..." oninput="filterChannels()" />
+    <div id="channels"></div>
+  </div>
+
+  <div id="videoContainer">
+    <div id="channelTitle">Pilih Channel</div>
+    <video id="videoPlayer" controls autoplay></video>
+  </div>
+
+  <!-- Library player -->
+  <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <script>
+    const video = document.getElementById("videoPlayer");
+    const channelsContainer = document.getElementById("channels");
+    const channelTitle = document.getElementById("channelTitle");
+    let dashPlayer = null;
+    let hls = null;
+    let allChannels = []; // Menyimpan semua channel
+
+    function loadPlaylist() {
+      const url = document.getElementById("playlistUrl").value.trim();
+      if (!url) {
+        alert("URL playlist tidak boleh kosong.");
+        return;
+      }
+
+      fetch(url)
+        .then((response) => response.text())
+        .then((data) => {
+          const channels = parseM3U(data);
+          allChannels = channels; // Menyimpan semua channel
+          displayChannelsByCategory(channels);
+        })
+        .catch((error) => {
+          console.error("Gagal memuat playlist:", error);
+          alert("Playlist tidak bisa dimuat.");
+        });
+    }
+
+    function parseM3U(data) {
+      const lines = data.split("\n");
+      const channels = [];
+      let current = {
+        title: "",
+        logo: "",
+        license: null,
+        url: "",
+        group: "Lainnya"
+      };
+
+      lines.forEach((line) => {
+        line = line.trim();
+
+        if (line.startsWith("#EXTINF")) {
+          const titleMatch = line.match(/,(.*)/);
+          const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+          const groupMatch = line.match(/group-title="([^"]+)"/);
+          current = {
+            title: titleMatch ? titleMatch[1].trim() : "No Name",
+            logo: logoMatch ? logoMatch[1] : "",
+            license: null,
+            url: "",
+            group: groupMatch ? groupMatch[1] : "Lainnya"
+          };
+        } else if (line.startsWith("#KODIPROP") && line.includes("license_key")) {
+          const keyData = line.split("license_key=")[1];
+          const [keyId, key] = keyData.split(":");
+          current.license = {
+            keyId: keyId.trim(),
+            key: key.trim()
+          };
+        } else if (line.startsWith("http")) {
+          current.url = line.trim();
+          channels.push({ ...current });
+        }
+      });
+
+      return channels;
+    }
+
+    function filterChannels() {
+      const searchTerm = document.getElementById("searchInput").value.toLowerCase();
+      const filteredChannels = allChannels.filter(channel => 
+        channel.title.toLowerCase().includes(searchTerm)
+      );
+      displayChannelsByCategory(filteredChannels);
+    }
+
+    function displayChannelsByCategory(channels) {
+      channelsContainer.innerHTML = "";
+
+      // Group channels by category
+      const grouped = {};
+      channels.forEach((channel) => {
+        if (!grouped[channel.group]) {
+          grouped[channel.group] = [];
+        }
+        grouped[channel.group].push(channel);
+      });
+
+      // Add "All Channels" category
+      const allChannelsGroup = grouped["All Channels"] = channels;
+
+      // Create the "All Channels" category
+      const allChannelsDiv = document.createElement("div");
+      allChannelsDiv.classList.add("category");
+      const allChannelsButton = document.createElement("h3");
+      allChannelsButton.textContent = "All Channels";
+      allChannelsButton.onclick = () => {
+        showCategoryChannels(allChannelsGroup, "All Channels");
+      };
+      allChannelsDiv.appendChild(allChannelsButton);
+      channelsContainer.appendChild(allChannelsDiv);
+
+      // Loop through categories and create accordion
+      for (const group in grouped) {
+        if (group !== "All Channels") {
+          const categoryDiv = document.createElement("div");
+          categoryDiv.classList.add("category");
+
+          const button = document.createElement("h3");
+          button.textContent = group;
+          button.onclick = () => toggleAccordion(button, group);
+          categoryDiv.appendChild(button);
+
+          const accordionContent = document.createElement("div");
+          accordionContent.classList.add("accordion-content");
+
+          grouped[group].forEach((channel) => {
+            const div = document.createElement("div");
+            div.classList.add("channel-item");
+            const img = document.createElement("img");
+            img.src = channel.logo || "https://via.placeholder.com/40?text=TV";
+            const span = document.createElement("span");
+            span.textContent = channel.title;
+            div.appendChild(img);
+            div.appendChild(span);
+            div.onclick = () => playChannel(channel.url, channel.title, channel.license);
+
+            accordionContent.appendChild(div);
+          });
+
+          categoryDiv.appendChild(accordionContent);
+          channelsContainer.appendChild(categoryDiv);
+        }
+      }
+    }
+
+    function toggleAccordion(button, group) {
+      const accordionContent = button.nextElementSibling;
+      if (accordionContent.style.display === "block") {
+        accordionContent.style.display = "none";
+      } else {
+        accordionContent.style.display = "block";
+      }
+    }
+
+    function showCategoryChannels(channels, group) {
+      channelsContainer.innerHTML = "";
+      const backButton = document.createElement("button");
+      backButton.textContent = "Back to Categories";
+      backButton.onclick = () => displayChannelsByCategory(channels);
+      channelsContainer.appendChild(backButton);
+
+      channels.forEach((channel) => {
+        const div = document.createElement("div");
+        div.classList.add("channel-item");
+
+        const img = document.createElement("img");
+        img.src = channel.logo || "https://via.placeholder.com/40?text=TV";
+
+        const span = document.createElement("span");
+        span.textContent = channel.title;
+
+        div.appendChild(img);
+        div.appendChild(span);
+
+        div.onclick = () => playChannel(channel.url, channel.title, channel.license);
+
+        channelsContainer.appendChild(div);
+      });
+    }
+
+    function playChannel(url, title, license) {
+    // Update channel title
+    channelTitle.textContent = title;
+
+    // Reset players if they exist
+    if (dashPlayer) {
+        dashPlayer.reset();
+        dashPlayer = null;
+    }
+    if (hls) {
+        hls.destroy();
+        hls = null;
+    }
+
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+
+    // Check for Widevine DRM protection and set license information
+    if (url.endsWith(".mpd")) {
+        dashPlayer = dashjs.MediaPlayer().create();
+
+        // If there is a license URL, handle Widevine DRM
+        if (license) {
+            const licenseUrl = license.key || license.url;
+
+            // Handle Widevine DRM protection with headers
+            dashPlayer.setProtectionData({
+                "org.w3.clearkey": {
+                    "clearkeys": {
+                        [license.keyId]: license.key
+                    },
+                    "priority": 0
+                },
+                "widevine": {
+                    "serverURL": licenseUrl, // URL for Widevine license
+                    "headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
+                    }
+                }
+            });
+        }
+
+        dashPlayer.initialize(video, url, true); // true = autoplay
+
+        // Ensure autoplay is triggered after metadata loaded
+        video.addEventListener("loadedmetadata", () => {
+            video.play().catch(err => {
+                console.warn("Autoplay diblokir, meminta interaksi pengguna.");
+            });
+        });
+
+    } else if (url.endsWith(".m3u8")) {
+        if (Hls.isSupported()) {
+            hls = new Hls();
+            hls.loadSource(url);
+            hls.attachMedia(video);
+
+            hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                video.play().catch(err => {
+                    console.warn("Autoplay HLS diblokir:", err);
+                });
+            });
+        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = url;
+            video.play();
+        } else {
+            alert("Browser tidak mendukung HLS.");
+        }
+    } else {
+        alert("Format tidak didukung: " + url);
+    }
+}
+    // Load the playlist initially
+    loadPlaylist();
+  </script>
+</body>
+</html>
